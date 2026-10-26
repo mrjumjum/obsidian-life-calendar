@@ -63,13 +63,16 @@ const DEFAULT_BLOCK_CONFIG = {
 
 module.exports = class LifeCalendarPlugin extends Plugin {
   async onload() {
-    await this.loadSettings();
+    // Register before awaiting plugin data so a failing loadData() cannot
+    // prevent the command, code block processor or settings tab from loading.
+    this.settings = normalisePluginSettings({});
 
     this.addCommand({
       id: "insert-life-calendar-block",
       name: "Insert life calendar block",
       editorCallback: (editor) => {
-        editor.replaceSelection(this.createExampleCodeBlock());
+        const prefix = editor.getCursor("from").ch === 0 ? "" : "\n";
+        editor.replaceSelection(`${prefix}${this.createExampleCodeBlock()}\n`);
       }
     });
 
@@ -78,11 +81,19 @@ module.exports = class LifeCalendarPlugin extends Plugin {
     });
 
     this.addSettingTab(new LifeCalendarSettingTab(this.app, this));
+
+    this.settingsReady = this.loadSettings();
+    await this.settingsReady;
   }
 
   async loadSettings() {
-    const saved = await this.loadData();
-    this.settings = normalisePluginSettings(saved || {});
+    let saved = {};
+    try {
+      saved = (await this.loadData()) || {};
+    } catch (error) {
+      console.error("Life Calendar: could not read plugin data, using defaults.", error);
+    }
+    this.settings = normalisePluginSettings(saved);
   }
 
   async saveSettings() {
@@ -90,6 +101,7 @@ module.exports = class LifeCalendarPlugin extends Plugin {
   }
 
   async renderCodeBlock(source, el, ctx) {
+    if (this.settingsReady) await this.settingsReady;
     el.empty();
     const sourcePath = ctx && ctx.sourcePath ? ctx.sourcePath : "";
 
