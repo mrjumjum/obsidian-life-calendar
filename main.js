@@ -259,6 +259,7 @@ module.exports = class LifeCalendarPlugin extends Plugin {
     }
 
     if (!config.includeVaultEvents) {
+      events.sort((a, b) => parseDateOnly(a.date) - parseDateOnly(b.date));
       return events;
     }
 
