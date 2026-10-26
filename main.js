@@ -54,12 +54,15 @@ const DEFAULT_BLOCK_CONFIG = {
   birthDate: "",
   lifeExpectancy: 85,
   includeVaultEvents: true,
+  showEventEmoji: false,
   ...DEFAULT_PLUGIN_SETTINGS,
   visibleCategories: [],
   hiddenCategories: [],
   phases: [],
   events: []
 };
+
+const EVENT_EMOJI_FALLBACK = "\u2022";
 
 module.exports = class LifeCalendarPlugin extends Plugin {
   async onload() {
@@ -180,6 +183,7 @@ module.exports = class LifeCalendarPlugin extends Plugin {
           cell.setAttr("type", "button");
           cell.addClass("has-event");
           if (weekEvents.length > 1) cell.addClass("has-multiple-events");
+          if (config.showEventEmoji) renderEventEmoji(cell, weekEvents);
           this.attachEventInteraction(cell, weekEvents, sourcePath);
         }
       }
@@ -282,7 +286,8 @@ module.exports = class LifeCalendarPlugin extends Plugin {
         colour: frontmatter.colour || frontmatter.color || "",
         linkText: file.path,
         sourcePath: file.path,
-        origin: "vault"
+        origin: "vault",
+        emoji: pickEventEmoji([frontmatter.emoji, title, file.basename])
       });
     }
 
@@ -459,6 +464,7 @@ function normaliseCalendarConfig(blockConfig, pluginSettings = {}) {
   normalised.showLabelsEvery = clampInteger(normalised.showLabelsEvery, 1, 25, defaults.showLabelsEvery);
   normalised.showDecadeGaps = normalised.showDecadeGaps !== false;
   normalised.includeVaultEvents = normalised.includeVaultEvents !== false;
+  normalised.showEventEmoji = normalised.showEventEmoji === true;
   normalised.visibleCategories = normaliseStringArray(normalised.visibleCategories);
   normalised.hiddenCategories = normaliseStringArray(normalised.hiddenCategories);
   normalised.phases = filterPhasesByConfig(normalisePhases(normalised.phases), normalised);
@@ -536,7 +542,8 @@ function normaliseInlineEvent(eventConfig, sourcePath) {
     link: rawLink,
     linkText: parsedLink ? parsedLink.target : String(rawLink || "").trim(),
     sourcePath,
-    origin: "inline"
+    origin: "inline",
+    emoji: pickEventEmoji([eventConfig.emoji, eventConfig.title || eventConfig.name || (parsedLink && parsedLink.alias)])
   };
 }
 
@@ -795,3 +802,101 @@ function clone(value) {
   if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
 }
+
+// ---------------------------------------------------------------------------
+// Emoji markers on event weeks (opt-in via showEventEmoji: true).
+//
+// Rule: an event's emoji is the first emoji found in, in order, its explicit
+// `emoji` field (frontmatter or inline), its title, and (vault notes only) the
+// note's file name. A week with several events shows the emoji of the earliest
+// event that has one; if none has an emoji the week shows EVENT_EMOJI_FALLBACK.
+// ---------------------------------------------------------------------------
+
+const RE_PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
+const RE_EMOJI_PRESENTATION = /\p{Emoji_Presentation}/u;
+const RE_REGIONAL_INDICATOR = /\p{Regional_Indicator}/gu;
+const RE_KEYCAP = /^[#*0-9]️?⃣$/u;
+// Fallback tokenizer for engines without Intl.Segmenter: flag pairs, keycaps,
+// and pictographs with VS16 / skin tones / tag sequences / ZWJ chains.
+const RE_EMOJI_SEQUENCE = /\p{Regional_Indicator}{2}|[#*0-9]️?⃣|\p{Extended_Pictographic}(?:️|\p{Emoji_Modifier}|[\u{E0020}-\u{E007F}])*(?:‍\p{Extended_Pictographic}(?:️|\p{Emoji_Modifier})*)*/gu;
+
+let graphemeSegmenter;
+
+function getGraphemeSegmenter() {
+  if (graphemeSegmenter === undefined) {
+    graphemeSegmenter = typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+      ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+      : null;
+  }
+  return graphemeSegmenter;
+}
+
+/**
+ * Returns the emoji form of a grapheme cluster, or null if it is not an emoji.
+ * - flags: two regional indicators (not Extended_Pictographic, so checked separately)
+ * - keycaps: [#*0-9] + optional VS16 + U+20E3 (base is not pictographic either)
+ * - anything containing an Extended_Pictographic code point (ZWJ sequences,
+ *   skin tones, tag flags, VS16 variants), except a bare text-style symbol such
+ *   as © ® ™ ‼ ↔ ▶ ⬅ written without VS16. Bare text-default pictographs in
+ *   Misc Symbols / Dingbats (U+2600–U+27BF, e.g. ✈ ❤ ☀) or at U+1F000+ (e.g. 🗺 🌡)
+ *   do count and get VS16 appended so they render in emoji style.
+ */
+function emojiFromGrapheme(grapheme) {
+  if (!grapheme) return null;
+  if (RE_KEYCAP.test(grapheme)) return grapheme;
+  const regionalIndicators = grapheme.match(RE_REGIONAL_INDICATOR);
+  if (regionalIndicators && regionalIndicators.length >= 2) return grapheme;
+  if (!RE_PICTOGRAPHIC.test(grapheme)) return null;
+
+  const codePoints = Array.from(grapheme);
+  if (codePoints.length === 1 && !RE_EMOJI_PRESENTATION.test(grapheme)) {
+    const cp = grapheme.codePointAt(0);
+    const isSymbolOrDingbat = cp >= 0x2600 && cp <= 0x27bf;
+    const isSupplementaryPictograph = cp >= 0x1f000;
+    if (!isSymbolOrDingbat && !isSupplementaryPictograph) return null;
+    return `${grapheme}️`;
+  }
+  return grapheme;
+}
+
+function extractFirstEmoji(text, options = {}) {
+  if (text === undefined || text === null) return null;
+  const value = String(text);
+  if (!value) return null;
+
+  const segmenter = options.forceFallback ? null : getGraphemeSegmenter();
+  if (segmenter) {
+    for (const { segment } of segmenter.segment(value)) {
+      const emoji = emojiFromGrapheme(segment);
+      if (emoji) return emoji;
+    }
+    return null;
+  }
+
+  for (const match of value.matchAll(RE_EMOJI_SEQUENCE)) {
+    const emoji = emojiFromGrapheme(match[0]);
+    if (emoji) return emoji;
+  }
+  return null;
+}
+
+function pickEventEmoji(candidates) {
+  for (const candidate of candidates || []) {
+    const emoji = extractFirstEmoji(candidate);
+    if (emoji) return emoji;
+  }
+  return "";
+}
+
+function renderEventEmoji(cell, events) {
+  const withEmoji = events.find((event) => event && event.emoji);
+  cell.addClass("has-event-emoji");
+  if (!withEmoji) cell.addClass("has-event-fallback");
+  cell.setAttr("data-event-count", String(events.length));
+  cell.createSpan({
+    cls: "life-calendar-week-emoji",
+    text: withEmoji ? withEmoji.emoji : EVENT_EMOJI_FALLBACK,
+    attr: { "aria-hidden": "true" }
+  });
+}
+

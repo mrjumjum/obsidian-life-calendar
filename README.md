@@ -113,6 +113,7 @@ The plugin settings define small defaults: age label interval, decade spacing, a
 | `showLabelsEvery` | number | Interval for right-hand age labels. Defaults to the plugin setting, initially `5`. |
 | `showDecadeGaps` | boolean | Adds larger spacing between decades when enabled. Defaults to the plugin setting, initially `true`. |
 | `includeVaultEvents` | boolean | Includes event notes found in the vault. |
+| `showEventEmoji` | boolean | Shows each event week's emoji on top of the cell instead of the dot marker. Defaults to `false`. |
 | `eventProperty` | string | Frontmatter property that marks event notes. Defaults to the plugin setting, initially `life-calendar-event`. |
 | `eventDateProperty` | string | Frontmatter property used as the event date. Defaults to the plugin setting, initially `date`. |
 | `eventTitleProperty` | string | Frontmatter property used as the event title. Defaults to the plugin setting, initially `title`. |
@@ -176,6 +177,20 @@ events:
     date: 2026-05-03
     link: [[Example Life Event]]
 ```
+
+## Event emoji
+
+Add `showEventEmoji: true` to a block to draw an emoji on each event week, on top of the phase colour. The emoji is the first one found in the event's optional `emoji` field, then its title, then (for vault notes) the note's file name. Emoji are matched per grapheme, so ZWJ sequences (👨‍👩‍👧), flags (🇵🇹), keycaps (1️⃣) and VS16 forms (✈️) stay whole. Weeks with several events show the emoji of the earliest event that has one. Weeks with no emoji show `•`.
+
+```yaml
+---
+life-calendar-event: true
+date: 2019-08-24
+title: Wedding 💍
+---
+```
+
+The emoji is drawn in a click-through `.life-calendar-week-emoji` overlay, so tooltips and the click menu are unchanged. Its size can be adjusted with `--life-calendar-emoji-scale` (default `0.8` of the cell width).
 
 ## Privacy and data handling
 
